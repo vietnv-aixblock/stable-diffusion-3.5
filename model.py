@@ -732,7 +732,7 @@ class MyModel(AIxBlockMLBase):
                 nf4_config = BitsAndBytesConfig(
                     load_in_4bit=True,
                     bnb_4bit_quant_type="nf4",
-                    bnb_4bit_compute_dtype=dtype,
+                    bnb_4bit_compute_dtype=torch.bfloat16,
                 )
                 model_nf4 = SD3Transformer2DModel.from_pretrained(
                     model_id,
