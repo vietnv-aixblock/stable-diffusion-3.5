@@ -12,7 +12,7 @@ HfFolder.save_token(hf_token)
 
 from huggingface_hub import login
 
-hf_access_token = "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"
+hf_access_token = "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"
 login(token=hf_access_token)
 
 

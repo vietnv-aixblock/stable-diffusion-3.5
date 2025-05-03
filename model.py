@@ -55,6 +55,11 @@ from function_ml import (
 from logging_class import start_queue, write_log
 from misc import get_device_count
 from param_class import TrainingConfigSD3, TrainingConfigSD3Lora, TrainingConfigSDXL
+from diffusers import (
+    BitsAndBytesConfig,
+    SD3Transformer2DModel,
+    StableDiffusion3Pipeline,
+)
 
 # --------------------------------------------------------------------------------------
 with open("models.yaml", "r") as file:
@@ -712,18 +717,38 @@ class MyModel(AIxBlockMLBase):
             "hf_model_id", "stabilityai/stable-diffusion-3.5-medium"
         )
         project_id = kwargs.get("project_id", None)
-
-        # download the model
-        try:
-            pipe = AutoPipelineForText2Image.from_pretrained(
-                model_id, torch_dtype=self.torch_dtype
-            )
-        except Exception as e:
-            base_model = hf_model_id
-            pipe = AutoPipelineForText2Image.from_pretrained(
-                base_model, torch_dtype=self.torch_dtype
-            )
-            pipe.load_lora_weights(model_id, weight_name=chkpt_name)
+        if torch.cuda.is_available():
+            device = "cuda"
+        else:
+            device = "cpu"
+        # Initialize pipe as None - will be loaded when button is clicked
+        pipe = None
+        model_nf4 = None
+        
+        def load_model_fn():
+            nonlocal pipe, model_nf4, device
+            try:
+                nf4_config = BitsAndBytesConfig(
+                    load_in_4bit=True,
+                    bnb_4bit_quant_type="nf4",
+                    bnb_4bit_compute_dtype=dtype,
+                )
+                model_nf4 = SD3Transformer2DModel.from_pretrained(
+                    model_id,
+                    subfolder="transformer",
+                    quantization_config=nf4_config,
+                    torch_dtype=torch.bfloat16,
+                    device_map=device,
+                )
+                pipe = StableDiffusion3Pipeline.from_pretrained(
+                    model_id,
+                    transformer=model_nf4,
+                    torch_dtype=torch.bfloat16,
+                    device_map="balanced",
+                )
+                return "Model loaded successfully!", gr.update(interactive=True)
+            except Exception as e:
+                return f"Error loading model: {str(e)}", gr.update(interactive=False)
 
         print(
             f"""\
@@ -782,52 +807,33 @@ class MyModel(AIxBlockMLBase):
         ) -> tuple:
             if prompt == "" or prompt is None:
                 raise Exception("Prompt cannot be empty")
+            if pipe is None:
+                raise Exception("Please load the model first by clicking 'Load Model' button")
 
-            # model = model_list[model]
 
-            # # for low GPU RAM, quantize from 16b to 8b
-            # quantize(pipe.transformer, weights=qfloat8)
-            # freeze(pipe.transformer)
-            # quantize(pipe.text_encoder_2, weights=qfloat8)
-            # freeze(pipe.text_encoder_2)
-
-            # # for even lower GPU RAM
-            # pipe.vae.enable_tiling()
-            # pipe.vae.enable_slicing()
-
-            pipe.enable_sequential_cpu_offload()
-
-            if torch.cuda.is_available():
-                device = "cuda"
-            else:
-                device = "cpu"
             image = pipe(
                 prompt=prompt,
                 width=width,
                 height=height,
                 num_inference_steps=step,
                 guidance_scale=guidance_scale,
-                generator=torch.Generator(device=device),
             ).images[0]
 
             return image, ""
 
         with gr.Blocks(
             theme=gr.themes.Soft(text_size="sm"),
-            title="Flux Image Generator",
+            title="Stable Diffusion 3.5 Image Generator",
             css=css,
         ) as demo_txt_to_img:
-
             stats = gr.State(STATS_DEFAULT)
             config = asdict(stats.value.config)
 
-            # with gr.Row():
-            #     # model = gr.Dropdown(list(model_list.keys()), label="Select VLLM Model", type="value")
-            #     model = gr.Textbox(value=model_id, label="VLLM Model: ", type="text",
-            #                        interactive=False)
-
             with gr.Row():
-                image_field = gr.Image(label="Output Image", elem_id="output_image")
+                with gr.Column(scale=3):
+                    image_field = gr.Image(label="Output Image", elem_id="output_image")
+                with gr.Column(scale=1):
+                    load_model_btn = gr.Button("Load Model", variant="primary")
             with gr.Row():
                 with gr.Column(scale=3):
                     prompt = gr.TextArea(
@@ -837,7 +843,7 @@ class MyModel(AIxBlockMLBase):
                         lines=10,
                         max_lines=8,
                     )
-                    generate_btn = gr.Button("Generate")
+                    generate_btn = gr.Button("Generate", interactive=False)
                 with gr.Column(scale=1):
                     guidance_scale = gr.Slider(
                         value=STATS_DEFAULT.config.guidance_scale,
@@ -877,6 +883,12 @@ class MyModel(AIxBlockMLBase):
                     examples_per_page=60,
                 )
 
+            def load_model_handler():
+                status, btn_update = load_model_fn()
+                if "successfully" in status:
+                    return status, gr.update(interactive=True)
+                return status, gr.update(interactive=False)
+
             # Event handlers
             generate_btn.click(
                 fn=generate_btn_handler,
@@ -884,9 +896,15 @@ class MyModel(AIxBlockMLBase):
                 outputs=[image_field, prompt],
                 api_name="generate",
             )
+            
+            load_model_btn.click(
+                fn=load_model_handler,
+                inputs=[],
+                outputs=[gr.Textbox(label="Status"), generate_btn],
+            )
 
-        with gr.Blocks(css="style.css") as demo:
-            gr.Markdown("Flux VLLM")
+        with gr.Blocks(css=css) as demo:
+            gr.Markdown("Stable-diffusion-3.5")
             with gr.Tabs():
                 if task == "text-to-image":
                     with gr.Tab(label=task):
