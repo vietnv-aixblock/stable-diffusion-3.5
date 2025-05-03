@@ -711,7 +711,7 @@ class MyModel(AIxBlockMLBase):
         hf_model_id = kwargs.get(
             "hf_model_id", "stabilityai/stable-diffusion-3.5-medium"
         )
-        project_id = project
+        project_id = kwargs.get("project_id", None)
 
         # download the model
         try:
