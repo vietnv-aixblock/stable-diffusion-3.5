@@ -1,0 +1,12 @@
+/models
+/data
+/datasets
+/notebook
+/outputs
+/.git
+/.gradio
+/logs
+
+__pycache__
+.ipynb_checkpoints
+
