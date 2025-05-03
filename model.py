@@ -42,6 +42,7 @@ from centrifuge import (
 from datasets import load_dataset
 from diffusers import AutoPipelineForText2Image
 from huggingface_hub import HfApi, HfFolder, hf_hub_download, login
+from mcp.server.fastmcp import FastMCP
 
 import constants as const
 import utils
@@ -55,8 +56,10 @@ from logging_class import start_queue, write_log
 from misc import get_device_count
 from param_class import TrainingConfigSD3, TrainingConfigSD3Lora, TrainingConfigSDXL
 
+# --------------------------------------------------------------------------------------
 with open("models.yaml", "r") as file:
     models = yaml.safe_load(file)
+mcp = FastMCP("aixblock-mcp")
 
 
 def base64url_encode(data):
@@ -351,7 +354,8 @@ class MyModel(AIxBlockMLBase):
 
         print("fit() completed successfully.")
 
-    def action(self, project, command, collection, **kwargs):
+    @mcp.tool()
+    def action(self, command, **kwargs):
         """
         {
             "command": "train",
@@ -360,7 +364,7 @@ class MyModel(AIxBlockMLBase):
                 "framework": "huggingface",
                 "model_id": "stabilityai/stable-diffusion-3.5-medium",
                 "push_to_hub": true,
-                "push_to_hub_token": "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",
+                "push_to_hub_token": "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",
                 // "dataset_id": 13,
                 "TrainingArguments": {
                     // see param_class.py for the full training arguments
@@ -370,14 +374,7 @@ class MyModel(AIxBlockMLBase):
             "project": "1"
         }
         """
-        print(
-            f"""
-            project: {project},
-            command: {command},
-            collection: {collection},
-            """
-        )
-
+        # region Train
         if command.lower() == "train":
             try:
                 clone_dir = const.CLONE_DIR
@@ -578,11 +575,11 @@ class MyModel(AIxBlockMLBase):
 
             except Exception as e:
                 return {"message": f"train failed: {e}"}
-
+        # region Stop
         elif command.lower() == "stop":
             subprocess.run(["pkill", "-9", "-f", "./train_dreambooth_flux.py"])
             return {"message": "train stop successfully", "result": "Done"}
-
+        # region Tensorboard
         elif command.lower() == "tensorboard":
 
             def run_tensorboard():
@@ -602,7 +599,7 @@ class MyModel(AIxBlockMLBase):
             tensorboard_thread = threading.Thread(target=run_tensorboard)
             tensorboard_thread.start()
             return {"message": "tensorboardx started successfully"}
-
+        # region Predict
         elif command.lower() == "predict":
             try:
                 prompt = kwargs.get("prompt", None)
@@ -683,7 +680,7 @@ class MyModel(AIxBlockMLBase):
             task = kwargs.get("task", "")
             if task == "text-to-image":
                 prompt_text = f"""
-                  A planet, yarn art style
+                A planet, yarn art style
                     """
 
             return {
@@ -699,7 +696,8 @@ class MyModel(AIxBlockMLBase):
 
             # return {"message": "train completed successfully"}
 
-    def model(self, project, **kwargs):
+    @mcp.tool()
+    def model(self, **kwargs):
         # store all import here
         import gc
 
