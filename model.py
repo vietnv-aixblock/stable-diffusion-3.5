@@ -750,7 +750,7 @@ class MyModel(AIxBlockMLBase):
                 return "Model loaded successfully!", gr.update(interactive=True)
             except Exception as e:
                 return f"Error loading model: {str(e)}", gr.update(interactive=False)
-        
+
         @dataclass
         class Config:
             guidance_scale = 3.0
@@ -824,6 +824,12 @@ class MyModel(AIxBlockMLBase):
                     image_field = gr.Image(label="Output Image", elem_id="output_image")
                 with gr.Column(scale=1):
                     load_model_btn = gr.Button("Load Model", variant="primary")
+                    status_box = gr.Textbox(
+                        label="Model Status",
+                        interactive=False,
+                        value="Model not loaded",
+                        lines=2,
+                    )
             with gr.Row():
                 with gr.Column(scale=3):
                     prompt = gr.TextArea(
@@ -873,11 +879,17 @@ class MyModel(AIxBlockMLBase):
                     examples_per_page=60,
                 )
 
+            import time
+
             def load_model_handler():
+                # Hiển thị trạng thái loading ngay khi bắt đầu
+                yield "Loading model, please wait...", gr.update(interactive=False)
                 status, btn_update = load_model_fn()
+                # Trả về kết quả cuối cùng
                 if "successfully" in status:
-                    return status, gr.update(interactive=True)
-                return status, gr.update(interactive=False)
+                    yield status, gr.update(interactive=True)
+                else:
+                    yield status, gr.update(interactive=False)
 
             # Event handlers
             generate_btn.click(
@@ -890,7 +902,9 @@ class MyModel(AIxBlockMLBase):
             load_model_btn.click(
                 fn=load_model_handler,
                 inputs=[],
-                outputs=[gr.Textbox(label="Status"), generate_btn],
+                outputs=[status_box, generate_btn],
+                api_name=None,
+                queue=True,  # Bắt buộc để enable yield (stream trạng thái)
             )
 
         with gr.Blocks(css=css) as demo:
