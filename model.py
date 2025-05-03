@@ -704,7 +704,6 @@ class MyModel(AIxBlockMLBase):
     @mcp.tool()
     def model(self, **kwargs):
         # store all import here
-        import gc
 
         import gradio as gr
 
