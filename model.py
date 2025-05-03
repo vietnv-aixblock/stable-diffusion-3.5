@@ -724,7 +724,9 @@ class MyModel(AIxBlockMLBase):
         # Initialize pipe as None - will be loaded when button is clicked
         pipe = None
         model_nf4 = None
-        
+        hf_access_token = kwargs.get("hf_access_token", const.HF_ACCESS_TOKEN)
+        login(token=hf_access_token)
+
         def load_model_fn():
             nonlocal pipe, model_nf4, device
             try:
@@ -749,19 +751,7 @@ class MyModel(AIxBlockMLBase):
                 return "Model loaded successfully!", gr.update(interactive=True)
             except Exception as e:
                 return f"Error loading model: {str(e)}", gr.update(interactive=False)
-
-        print(
-            f"""\
-        Project ID: {project_id}
-        Label config: {self.label_config}
-        Parsed JSON Label config: {self.parsed_label_config}"""
-        )
-        hf_access_token = kwargs.get("hf_access_token", const.HF_ACCESS_TOKEN)
-        login(token=hf_access_token)
-
-        gc.collect()
-        torch.cuda.empty_cache()
-
+        
         @dataclass
         class Config:
             guidance_scale = 3.0
@@ -808,8 +798,9 @@ class MyModel(AIxBlockMLBase):
             if prompt == "" or prompt is None:
                 raise Exception("Prompt cannot be empty")
             if pipe is None:
-                raise Exception("Please load the model first by clicking 'Load Model' button")
-
+                raise Exception(
+                    "Please load the model first by clicking 'Load Model' button"
+                )
 
             image = pipe(
                 prompt=prompt,
@@ -896,7 +887,7 @@ class MyModel(AIxBlockMLBase):
                 outputs=[image_field, prompt],
                 api_name="generate",
             )
-            
+
             load_model_btn.click(
                 fn=load_model_handler,
                 inputs=[],
@@ -906,11 +897,9 @@ class MyModel(AIxBlockMLBase):
         with gr.Blocks(css=css) as demo:
             gr.Markdown("Stable-diffusion-3.5")
             with gr.Tabs():
-                if task == "text-to-image":
-                    with gr.Tab(label=task):
-                        demo_txt_to_img.render()
-                else:
-                    return {"share_url": "", "local_url": ""}
+                # if task == "text-to-image":
+                with gr.Tab(label=task):
+                    demo_txt_to_img.render()
 
         gradio_app, local_url, share_url = demo.launch(
             share=True,
