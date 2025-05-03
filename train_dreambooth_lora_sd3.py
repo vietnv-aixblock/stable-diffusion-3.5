@@ -72,7 +72,7 @@ from tqdm.auto import tqdm
 from transformers import CLIPTokenizer, PretrainedConfig, T5TokenizerFast
 
 from logging_class import start_queue, stop_log, write_log
-
+# --------------------------------------------------------------------------
 if is_wandb_available():
     import wandb
 
