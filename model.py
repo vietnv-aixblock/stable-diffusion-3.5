@@ -29,6 +29,7 @@ from io import BytesIO
 from types import SimpleNamespace
 from typing import Dict, List, Optional, get_type_hints
 
+import gradio as gr
 import torch
 import wandb
 import yaml
@@ -40,7 +41,12 @@ from centrifuge import (
     SubscriptionEventHandler,
 )
 from datasets import load_dataset
-from diffusers import AutoPipelineForText2Image
+from diffusers import (
+    AutoPipelineForText2Image,
+    BitsAndBytesConfig,
+    SD3Transformer2DModel,
+    StableDiffusion3Pipeline,
+)
 from huggingface_hub import HfApi, HfFolder, hf_hub_download, login
 from mcp.server.fastmcp import FastMCP
 
@@ -55,11 +61,6 @@ from function_ml import (
 from logging_class import start_queue, write_log
 from misc import get_device_count
 from param_class import TrainingConfigSD3, TrainingConfigSD3Lora, TrainingConfigSDXL
-from diffusers import (
-    BitsAndBytesConfig,
-    SD3Transformer2DModel,
-    StableDiffusion3Pipeline,
-)
 
 # --------------------------------------------------------------------------------------
 with open("models.yaml", "r") as file:
@@ -703,11 +704,7 @@ class MyModel(AIxBlockMLBase):
 
     @mcp.tool()
     def model(self, **kwargs):
-        # store all import here
-
-        import gradio as gr
-
-        # from optimum.quanto import freeze, qfloat8, quantize
+        global pipe, model_nf4
         # initialize
         task = kwargs.get("task", "text-to-image")
         model_id = kwargs.get("model_id", "stabilityai/stable-diffusion-3.5-medium")
@@ -722,7 +719,10 @@ class MyModel(AIxBlockMLBase):
         login(token=hf_access_token)
 
         def load_model_fn():
-            nonlocal pipe, model_nf4, device
+            global pipe, model_nf4
+            if model_nf4 is not None:
+                # If the model has already been loaded, do not load it again
+                return "Model already loaded!", gr.update(interactive=True)
             try:
                 nf4_config = BitsAndBytesConfig(
                     load_in_4bit=True,
@@ -873,13 +873,9 @@ class MyModel(AIxBlockMLBase):
                     examples_per_page=60,
                 )
 
-            import time
-
             def load_model_handler():
-                # Hiển thị trạng thái loading ngay khi bắt đầu
                 yield "Loading model, please wait...", gr.update(interactive=False)
                 status, btn_update = load_model_fn()
-                # Trả về kết quả cuối cùng
                 if "successfully" in status:
                     yield status, gr.update(interactive=True)
                 else:
