@@ -711,11 +711,6 @@ class MyModel(AIxBlockMLBase):
         # initialize
         task = kwargs.get("task", "text-to-image")
         model_id = kwargs.get("model_id", "stabilityai/stable-diffusion-3.5-medium")
-        chkpt_name = kwargs.get("checkpoint", None)
-        hf_model_id = kwargs.get(
-            "hf_model_id", "stabilityai/stable-diffusion-3.5-medium"
-        )
-        project_id = kwargs.get("project_id", None)
         if torch.cuda.is_available():
             device = "cuda"
         else:
@@ -817,7 +812,6 @@ class MyModel(AIxBlockMLBase):
             css=css,
         ) as demo_txt_to_img:
             stats = gr.State(STATS_DEFAULT)
-            config = asdict(stats.value.config)
 
             with gr.Row():
                 with gr.Column(scale=3):
