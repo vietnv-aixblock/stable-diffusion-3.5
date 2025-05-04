@@ -704,7 +704,7 @@ class MyModel(AIxBlockMLBase):
 
     @mcp.tool()
     def model(self, **kwargs):
-        global pipe, model_nf4
+        global pipe_demo, model_nf4
         # initialize
         task = kwargs.get("task", "text-to-image")
         model_id = kwargs.get("model_id", "stabilityai/stable-diffusion-3.5-medium")
@@ -713,13 +713,13 @@ class MyModel(AIxBlockMLBase):
         else:
             device = "cpu"
         # Initialize pipe as None - will be loaded when button is clicked
-        pipe = None
+        pipe_demo = None
         model_nf4 = None
         hf_access_token = kwargs.get("hf_access_token", const.HF_ACCESS_TOKEN)
         login(token=hf_access_token)
 
         def load_model_fn():
-            global pipe, model_nf4
+            global pipe_demo, model_nf4
             if model_nf4 is not None:
                 # If the model has already been loaded, do not load it again
                 return "Model already loaded!", gr.update(interactive=True)
@@ -736,7 +736,7 @@ class MyModel(AIxBlockMLBase):
                     torch_dtype=torch.bfloat16,
                     device_map=device,
                 )
-                pipe = StableDiffusion3Pipeline.from_pretrained(
+                pipe_demo = StableDiffusion3Pipeline.from_pretrained(
                     model_id,
                     transformer=model_nf4,
                     torch_dtype=torch.bfloat16,
@@ -791,12 +791,12 @@ class MyModel(AIxBlockMLBase):
         ) -> tuple:
             if prompt == "" or prompt is None:
                 raise Exception("Prompt cannot be empty")
-            if pipe is None:
+            if pipe_demo is None:
                 raise Exception(
                     "Please load the model first by clicking 'Load Model' button"
                 )
 
-            image = pipe(
+            image = pipe_demo(
                 prompt=prompt,
                 width=width,
                 height=height,
