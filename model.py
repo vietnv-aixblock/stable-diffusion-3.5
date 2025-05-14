@@ -14,6 +14,7 @@
 
 import asyncio
 import base64
+import gc
 import hashlib
 import hmac
 import json
@@ -42,12 +43,12 @@ from centrifuge import (
 )
 from datasets import load_dataset
 from diffusers import (
-    AutoPipelineForText2Image,
     BitsAndBytesConfig,
     SD3Transformer2DModel,
     StableDiffusion3Pipeline,
 )
-from huggingface_hub import HfApi, HfFolder, hf_hub_download, login
+from huggingface_hub import HfFolder, hf_hub_download, login
+from loguru import logger
 from mcp.server.fastmcp import FastMCP
 
 import constants as const
@@ -290,75 +291,6 @@ def download(base_model, train_config):
 
 
 class MyModel(AIxBlockMLBase):
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-
-        HfFolder.save_token(const.HF_TOKEN)
-        login(token=const.HF_ACCESS_TOKEN)
-        wandb.login("allow", const.WANDB_TOKEN)
-        print("Login successful")
-
-        if torch.cuda.is_available():
-            if torch.cuda.is_bf16_supported():
-                self.dtype = torch.bfloat16
-            else:
-                self.dtype = torch.float16
-            print("CUDA is available.")
-        else:
-            print("No GPU available, using CPU.")
-
-        try:
-            if torch.cuda.is_available():
-                compute_capability = torch.cuda.get_device_properties(0).major
-                if compute_capability > 8:
-                    self.torch_dtype = torch.bfloat16
-                elif compute_capability > 7:
-                    self.torch_dtype = torch.float16
-            else:
-                self.torch_dtype = None  # auto setup for < 7
-        except Exception as e:
-            self.torch_dtype = None
-
-        try:
-            n_gpus = torch.cuda.device_count()
-            _ = f"{int(torch.cuda.mem_get_info()[0] / 1024 ** 3) - 2}GB"
-        except Exception as e:
-            print("Cannot get cuda memory:", e)
-            _ = 0
-        max_memory = {i: _ for i in range(n_gpus)}
-        print("max memory:", max_memory)
-
-    def predict(
-        self, tasks: List[Dict], context: Optional[Dict] = None, **kwargs
-    ) -> List[Dict]:
-        """ """
-        print(
-            f"""\
-        Run prediction on {tasks}
-        Received context: {context}
-        Project ID: {self.project_id}
-        Label config: {self.label_config}
-        Parsed JSON Label config: {self.parsed_label_config}"""
-        )
-        return []
-
-    def fit(self, event, data, **kwargs):
-        """ """
-
-        # use cache to retrieve the data from the previous fit() runs
-        old_data = self.get("my_data")
-        old_model_version = self.get("model_version")
-        print(f"Old data: {old_data}")
-        print(f"Old model version: {old_model_version}")
-
-        # store new data to the cache
-        self.set("my_data", "my_new_data_value")
-        self.set("model_version", "my_new_model_version")
-        print(f'New data: {self.get("my_data")}')
-        print(f'New model version: {self.get("model_version")}')
-
-        print("fit() completed successfully.")
 
     @mcp.tool()
     def action(self, command, **kwargs):
@@ -622,51 +554,46 @@ class MyModel(AIxBlockMLBase):
                 if prompt == "" or prompt is None:
                     return None, ""
 
-                if torch.cuda.is_available():
-                    device = "cuda"
-                else:
-                    device = "cpu"
-
-                try:
-                    pipe = AutoPipelineForText2Image.from_pretrained(
-                        model_id, torch_dtype=self.torch_dtype
-                    )
-                except Exception as e:
-                    model_id = "stabilityai/stable-diffusion-3.5-medium"
-                    pipe = AutoPipelineForText2Image.from_pretrained(
-                        model_id, torch_dtype=self.torch_dtype
-                    )
-                    pipe.load_lora_weights(model_id, weight_name=chkpt_name)
-
-                # # for low GPU RAM, quantize from 16b to 8b
-                # quantize(pipe.transformer, weights=qfloat8)
-                # freeze(pipe.transformer)
-                # quantize(pipe.text_encoder_2, weights=qfloat8)
-                # freeze(pipe.text_encoder_2)
-
-                # # for even lower GPU RAM
-                # pipe.vae.enable_tiling()
-                # pipe.vae.enable_slicing()
-
-                pipe.enable_sequential_cpu_offload()
-
-                image = pipe(
-                    prompt=prompt,
-                    width=width,
-                    height=height,
-                    num_inference_steps=num_inference_steps,
-                    guidance_scale=guidance_scale,
-                    generator=torch.Generator(device=device),
-                ).images[0]
-
-                pipe = None
-                torch.cuda.empty_cache()
+                with torch.no_grad():
+                    try:
+                        nf4_config = BitsAndBytesConfig(
+                            load_in_4bit=True,
+                            bnb_4bit_quant_type="nf4",
+                            bnb_4bit_compute_dtype=torch.bfloat16,
+                        )
+                        model_nf4 = SD3Transformer2DModel.from_pretrained(
+                            model_id,
+                            subfolder="transformer",
+                            quantization_config=nf4_config,
+                            torch_dtype=torch.bfloat16,
+                            # device_map=device,
+                        )
+                        pipe = StableDiffusion3Pipeline.from_pretrained(
+                            model_id,
+                            transformer=model_nf4,
+                            torch_dtype=torch.bfloat16,
+                            device_map="balanced",
+                        )
+                        image = pipe(
+                            prompt=prompt,
+                            width=width,
+                            height=height,
+                            num_inference_steps=num_inference_steps,
+                            guidance_scale=guidance_scale,
+                        ).images[0]
+                    except Exception as e:
+                        logger.error(str(e))
 
                 buffered = BytesIO()
                 image.save(buffered, format=format)
                 image.save(const.PROJ_DIR.joinpath(f"image.{format}"))
                 img_base64 = base64.b64encode(buffered.getvalue()).decode("utf-8")
                 generated_url = f"/downloads?path=image.{format}"
+
+                del pipe, model_nf4
+                gc.collect()
+                torch.cuda.empty_cache()
+
                 result = {
                     "model_version": model_id,
                     "result": {
@@ -708,10 +635,6 @@ class MyModel(AIxBlockMLBase):
         # initialize
         task = kwargs.get("task", "text-to-image")
         model_id = kwargs.get("model_id", "stabilityai/stable-diffusion-3.5-medium")
-        if torch.cuda.is_available():
-            device = "cuda"
-        else:
-            device = "cpu"
         # Initialize pipe as None - will be loaded when button is clicked
         pipe_demo = None
         model_nf4 = None
@@ -734,7 +657,7 @@ class MyModel(AIxBlockMLBase):
                     subfolder="transformer",
                     quantization_config=nf4_config,
                     torch_dtype=torch.bfloat16,
-                    device_map=device,
+                    # device_map=device,
                 )
                 pipe_demo = StableDiffusion3Pipeline.from_pretrained(
                     model_id,
@@ -894,11 +817,11 @@ class MyModel(AIxBlockMLBase):
                 inputs=[],
                 outputs=[status_box, generate_btn],
                 api_name=None,
-                queue=True,  # Bắt buộc để enable yield (stream trạng thái)
+                queue=True,
             )
 
         with gr.Blocks(css=css) as demo:
-            gr.Markdown("Stable-diffusion-3.5")
+            gr.Markdown("Flux-dev")
             with gr.Tabs():
                 # if task == "text-to-image":
                 with gr.Tab(label=task):

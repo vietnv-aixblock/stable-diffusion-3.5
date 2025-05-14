@@ -9,6 +9,11 @@ from pydantic import BaseModel
 from starlette.routing import Mount
 
 from model import MyModel, mcp
+import subprocess
+
+# ------------------------------------------------------------------
+# load model
+subprocess.run("venv/bin/python load_model.py", shell=True)
 
 
 # Models for request validation
